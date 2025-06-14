@@ -16,7 +16,7 @@ function getWebhookURL() {
 
 // 🔐 Authorized device UDIDs (Real Apple UDIDs)
 const authorizedDevices = new Set([
-    "E0C7D486-ECD7-44DE-83BE-4392085C58F2", // Your real UDID
+    "00008130-000671DC2EF2001C", // Your real UDID
     // Add more authorized devices here
 ]);
 
