@@ -1,7 +1,7 @@
 // Encrypted UDID Authentication
 const authorizedDevices = new Set([
   // Add your device UDIDs here - get from console logs
-  "stable_123456789_abc12345", // Your device UDID will look like this
+  "stable_2992280087542020475_11759857", // Your device UDID will look like this
   // Add more as needed
 ]);
 
