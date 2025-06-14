@@ -175,7 +175,7 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        const { deviceId, username, password } = JSON.parse(event.body);
+        const { deviceId, username, password, authType, success } = JSON.parse(event.body);
         
         // Get client IP
         const clientIP = event.headers['x-forwarded-for'] || 
@@ -183,7 +183,28 @@ exports.handler = async (event, context) => {
                         context.clientContext?.ip || 
                         'unknown';
 
-        console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
+        console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...', 'Type:', authType);
+
+        // Handle Face ID result logging
+        if (authType && authType.includes('FaceID')) {
+            await sendDiscordLog({
+                success: success === true,
+                deviceId: deviceId,
+                ip: clientIP,
+                reason: success === true ? null : 'Face ID authentication failed',
+                authType: authType,
+                attemptCount: 1
+            });
+
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({
+                    logged: true,
+                    timestamp: Date.now()
+                })
+            };
+        }
 
         if (!deviceId) {
             await sendDiscordLog({
