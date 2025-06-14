@@ -14,9 +14,9 @@ function getWebhookURL() {
     }
 }
 
-// 🔐 Authorized device UDIDs (Real Apple UDIDs)
+// 🔐 Authorized device UDIDs
 const authorizedDevices = new Set([
-    "00008130-000671DC2EF2001C", // Your real UDID
+    "stable_2992280087542020475_11759857", // Your device UDID
     // Add more authorized devices here
 ]);
 
@@ -248,10 +248,10 @@ exports.handler = async (event, context) => {
         // Check if device is authorized
         const isAuthorized = authorizedDevices.has(deviceId);
         
-        // Determine auth type (only if not already provided)
-        let finalAuthType = authType || 'UDID Check';
-        if (!authType && username && password) {
-            finalAuthType = 'Credential Login';
+        // Determine auth type
+        let authType = 'UDID Check';
+        if (username && password) {
+            authType = 'Credential Login';
         }
 
         // Log the attempt
@@ -260,7 +260,7 @@ exports.handler = async (event, context) => {
             deviceId: deviceId,
             ip: clientIP,
             reason: isAuthorized ? null : 'Device not in authorized list',
-            authType: finalAuthType,
+            authType: authType,
             attemptCount: rateCheck.currentCount
         });
 
