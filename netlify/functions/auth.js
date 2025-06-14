@@ -248,10 +248,10 @@ exports.handler = async (event, context) => {
         // Check if device is authorized
         const isAuthorized = authorizedDevices.has(deviceId);
         
-        // Determine auth type
-        let authType = 'UDID Check';
-        if (username && password) {
-            authType = 'Credential Login';
+        // Determine auth type (only if not already provided)
+        let finalAuthType = authType || 'UDID Check';
+        if (!authType && username && password) {
+            finalAuthType = 'Credential Login';
         }
 
         // Log the attempt
@@ -260,7 +260,7 @@ exports.handler = async (event, context) => {
             deviceId: deviceId,
             ip: clientIP,
             reason: isAuthorized ? null : 'Device not in authorized list',
-            authType: authType,
+            authType: finalAuthType,
             attemptCount: rateCheck.currentCount
         });
 
