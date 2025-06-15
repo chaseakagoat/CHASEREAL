@@ -1,4 +1,4 @@
-// Chase UDID Authentication with Discord Webhook Logging
+// Chase UDID Authentication with Advanced Security
 const crypto = require('crypto');
 
 // 🔐 ENCRYPTED DISCORD WEBHOOK URL (AES-256-CBC)
@@ -16,6 +16,7 @@ function getWebhookURL() {
         return url;
     } catch (error) {
         console.error('🔒 AES decrypt failed:', error.message);
+        // No fallback - return null for security
         return null;
     }
 }
@@ -26,15 +27,99 @@ const authorizedDevices = new Set([
     // Add more authorized devices here
 ]);
 
-// 📊 Track login attempts for rate limiting
+// 📊 Track login attempts for rate limiting (per device)
 const loginAttempts = new Map();
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_TIME = 15 * 60 * 1000; // 15 minutes
 
+// 🚨 Track IP attempts for abuse detection
+const ipAttempts = new Map();
+const MAX_IP_ATTEMPTS = 20; // per hour
+const IP_LOCKOUT_TIME = 60 * 60 * 1000; // 1 hour
+
+// 🔐 JWT Helper Functions
+function generateJWT(payload) {
+    try {
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+            console.error('JWT_SECRET not found in environment variables');
+            return null;
+        }
+        
+        const header = { alg: 'HS256', typ: 'JWT' };
+        const now = Math.floor(Date.now() / 1000);
+        
+        const jwtPayload = {
+            ...payload,
+            iat: now,
+            exp: now + (60 * 60), // 1 hour expiration
+            iss: 'chase-auth-system'
+        };
+        
+        const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
+        const encodedPayload = Buffer.from(JSON.stringify(jwtPayload)).toString('base64url');
+        
+        const signature = crypto
+            .createHmac('sha256', secret)
+            .update(`${encodedHeader}.${encodedPayload}`)
+            .digest('base64url');
+        
+        return `${encodedHeader}.${encodedPayload}.${signature}`;
+    } catch (error) {
+        console.error('JWT generation failed:', error);
+        return null;
+    }
+}
+
+// 🚨 Check IP rate limiting
+function checkIPRateLimit(ip) {
+    const now = Date.now();
+    
+    if (!ipAttempts.has(ip)) {
+        ipAttempts.set(ip, { count: 0, lastAttempt: now, lockedUntil: 0 });
+    }
+    
+    const attempts = ipAttempts.get(ip);
+    
+    // Check if currently locked out
+    if (attempts.lockedUntil > now) {
+        return {
+            allowed: false,
+            reason: "IP rate limited",
+            lockoutEnds: attempts.lockedUntil
+        };
+    }
+    
+    // Reset if last attempt was over 1 hour ago
+    if (now - attempts.lastAttempt > IP_LOCKOUT_TIME) {
+        attempts.count = 0;
+    }
+    
+    attempts.count++;
+    attempts.lastAttempt = now;
+    
+    if (attempts.count >= MAX_IP_ATTEMPTS) {
+        attempts.lockedUntil = now + IP_LOCKOUT_TIME;
+        return {
+            allowed: false,
+            reason: "Too many IP attempts",
+            lockoutEnds: attempts.lockedUntil
+        };
+    }
+    
+    return {
+        allowed: true,
+        attemptsLeft: MAX_IP_ATTEMPTS - attempts.count
+    };
+}
+
 // 🚨 Send Discord webhook notification
 async function sendDiscordLog(data) {
     const webhookURL = getWebhookURL();
-    if (!webhookURL) return;
+    if (!webhookURL) {
+        console.error('❌ No webhook URL available - logging disabled');
+        return;
+    }
     
     try {
         const embed = {
@@ -73,7 +158,7 @@ async function sendDiscordLog(data) {
                 }
             ],
             footer: {
-                text: "Chase Security Monitor",
+                text: "Chase Security Monitor - Enhanced",
                 icon_url: "https://cdn-icons-png.flaticon.com/512/174/174857.png"
             },
             timestamp: new Date().toISOString()
@@ -97,11 +182,11 @@ async function sendDiscordLog(data) {
 
         const payload = {
             embeds: [embed],
-            username: "Chase Security Bot",
+            username: "Chase Security Bot Enhanced",
             avatar_url: "https://cdn-icons-png.flaticon.com/512/3064/3064197.png"
         };
 
-        await fetch(webhookURL, {
+        const response = await fetch(webhookURL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -109,12 +194,16 @@ async function sendDiscordLog(data) {
             body: JSON.stringify(payload)
         });
 
+        if (!response.ok) {
+            console.error('Discord webhook failed:', response.status);
+        }
+
     } catch (error) {
-        console.error('Discord webhook failed:', error);
+        console.error('Discord webhook error:', error);
     }
 }
 
-// 🔐 Check and update rate limiting
+// 🔐 Check device rate limiting
 function checkRateLimit(deviceId, ip) {
     const key = `${deviceId}_${ip}`;
     const now = Date.now();
@@ -184,12 +273,34 @@ exports.handler = async (event, context) => {
         const { deviceId, username, password } = JSON.parse(event.body);
         
         // Get client IP
-        const clientIP = event.headers['x-forwarded-for'] || 
+        const clientIP = event.headers['x-forwarded-for']?.split(',')[0] || 
                         event.headers['x-real-ip'] || 
                         context.clientContext?.ip || 
                         'unknown';
 
         console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
+
+        // Check IP rate limiting first
+        const ipCheck = checkIPRateLimit(clientIP);
+        if (!ipCheck.allowed) {
+            await sendDiscordLog({
+                success: false,
+                deviceId: deviceId || 'UNKNOWN',
+                ip: clientIP,
+                reason: ipCheck.reason,
+                authType: 'IP Rate Limit',
+                attemptCount: MAX_IP_ATTEMPTS
+            });
+
+            return {
+                statusCode: 429,
+                headers,
+                body: JSON.stringify({ 
+                    message: 'IP temporarily blocked due to abuse',
+                    lockoutEnds: ipCheck.lockoutEnds
+                })
+            };
+        }
 
         if (!deviceId) {
             await sendDiscordLog({
@@ -208,7 +319,7 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Check rate limiting
+        // Check device rate limiting
         const rateCheck = checkRateLimit(deviceId, clientIP);
         if (!rateCheck.allowed) {
             await sendDiscordLog({
@@ -261,14 +372,31 @@ exports.handler = async (event, context) => {
             };
         }
 
+        // Generate secure JWT token
+        const token = generateJWT({
+            deviceId: deviceId,
+            authorized: true,
+            ip: clientIP
+        });
+
+        if (!token) {
+            console.error('Failed to generate JWT token');
+            return {
+                statusCode: 500,
+                headers,
+                body: JSON.stringify({ message: 'Authentication token generation failed' })
+            };
+        }
+
         console.log('Authorized device access granted:', deviceId.substring(0, 20) + '...');
 
-        // Success response
+        // Success response with JWT
         return {
             statusCode: 200,
             headers,
             body: JSON.stringify({
                 verified: true,
+                token: token,
                 deviceId: deviceId,
                 timestamp: Date.now(),
                 message: 'Device authorized'
