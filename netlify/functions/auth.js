@@ -1,8 +1,20 @@
-// Chase UDID Authentication with Advanced Security
+// 🔐 PRIVATE Chase UDID Authentication - ULTRA SECURE
 const crypto = require('crypto');
 
 // 🔐 ENCRYPTED DISCORD WEBHOOK URL (AES-256-CBC)
 const ENCRYPTED_WEBHOOK = "fHVWWeTGXd5/CXS+2KXyLKmdlyyQ2XDZ0ZrxoT3Ge3KbTQ5qO5gFa3shjm8sDgTnzzN7GzUqDKT0n10u9lIEy0BxMGL0PvpK6dDZKDnxOniRBRX4Wo0EDeMcxMMYhOcG4t8irouxyNgrtNrg5n79PZPURNEIOC+kKsh+dayHjhg=";
+
+// 🔐 PRIVATE ACCESS VERIFICATION
+function verifyPrivateAccess(headers) {
+    const providedKey = headers['x-private-key'];
+    const expectedKey = process.env.PRIVATE_KEY;
+    
+    if (!providedKey || !expectedKey) {
+        return false;
+    }
+    
+    return providedKey === expectedKey;
+}
 
 // 🔐 Decrypt webhook URL using AES
 function getWebhookURL() {
@@ -16,7 +28,6 @@ function getWebhookURL() {
         return url;
     } catch (error) {
         console.error('🔒 AES decrypt failed:', error.message);
-        // No fallback - return null for security
         return null;
     }
 }
@@ -53,7 +64,7 @@ function generateJWT(payload) {
             ...payload,
             iat: now,
             exp: now + (60 * 60), // 1 hour expiration
-            iss: 'chase-auth-system'
+            iss: 'chase-private-auth-system'
         };
         
         const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
@@ -81,7 +92,6 @@ function checkIPRateLimit(ip) {
     
     const attempts = ipAttempts.get(ip);
     
-    // Check if currently locked out
     if (attempts.lockedUntil > now) {
         return {
             allowed: false,
@@ -90,7 +100,6 @@ function checkIPRateLimit(ip) {
         };
     }
     
-    // Reset if last attempt was over 1 hour ago
     if (now - attempts.lastAttempt > IP_LOCKOUT_TIME) {
         attempts.count = 0;
     }
@@ -123,7 +132,7 @@ async function sendDiscordLog(data) {
     
     try {
         const embed = {
-            title: data.success ? "✅ SUCCESSFUL LOGIN" : "❌ FAILED LOGIN ATTEMPT",
+            title: data.success ? "✅ PRIVATE AUTH SUCCESS" : "❌ PRIVATE AUTH FAILED",
             color: data.success ? 0x00ff00 : 0xff0000,
             fields: [
                 {
@@ -133,7 +142,7 @@ async function sendDiscordLog(data) {
                 },
                 {
                     name: "📱 Status",
-                    value: data.success ? "Authorized Access" : "Unauthorized Attempt",
+                    value: data.success ? "Private Access Granted" : "Private Access Denied",
                     inline: true
                 },
                 {
@@ -148,7 +157,7 @@ async function sendDiscordLog(data) {
                 },
                 {
                     name: "🔒 Auth Type",
-                    value: data.authType || "UDID Check",
+                    value: "PRIVATE ENDPOINT",
                     inline: true
                 },
                 {
@@ -158,7 +167,7 @@ async function sendDiscordLog(data) {
                 }
             ],
             footer: {
-                text: "Chase Security Monitor - Enhanced",
+                text: "🔐 Chase Private Security Monitor",
                 icon_url: "https://cdn-icons-png.flaticon.com/512/174/174857.png"
             },
             timestamp: new Date().toISOString()
@@ -172,17 +181,9 @@ async function sendDiscordLog(data) {
             });
         }
 
-        if (data.attemptCount >= 3) {
-            embed.fields.push({
-                name: "🚨 Security Alert",
-                value: "Multiple failed attempts detected!",
-                inline: false
-            });
-        }
-
         const payload = {
             embeds: [embed],
-            username: "Chase Security Bot Enhanced",
+            username: "🔐 Chase Private Security Bot",
             avatar_url: "https://cdn-icons-png.flaticon.com/512/3064/3064197.png"
         };
 
@@ -214,7 +215,6 @@ function checkRateLimit(deviceId, ip) {
     
     const attempts = loginAttempts.get(key);
     
-    // Check if currently locked out
     if (attempts.lockedUntil > now) {
         return {
             allowed: false,
@@ -224,7 +224,6 @@ function checkRateLimit(deviceId, ip) {
         };
     }
     
-    // Reset if last attempt was over 1 hour ago
     if (now - attempts.lastAttempt > 60 * 60 * 1000) {
         attempts.count = 0;
     }
@@ -253,7 +252,7 @@ exports.handler = async (event, context) => {
     // Handle CORS
     const headers = {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Private-Key',
         'Access-Control-Allow-Methods': 'POST, OPTIONS'
     };
 
@@ -269,6 +268,16 @@ exports.handler = async (event, context) => {
         };
     }
 
+    // 🔐 VERIFY PRIVATE ACCESS FIRST
+    if (!verifyPrivateAccess(event.headers)) {
+        console.log('❌ Unauthorized access attempt to private endpoint');
+        return {
+            statusCode: 403,
+            headers,
+            body: JSON.stringify({ message: 'Forbidden - Private endpoint' })
+        };
+    }
+
     try {
         const { deviceId, username, password } = JSON.parse(event.body);
         
@@ -278,7 +287,7 @@ exports.handler = async (event, context) => {
                         context.clientContext?.ip || 
                         'unknown';
 
-        console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
+        console.log('🔐 Private auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
 
         // Check IP rate limiting first
         const ipCheck = checkIPRateLimit(clientIP);
@@ -288,7 +297,7 @@ exports.handler = async (event, context) => {
                 deviceId: deviceId || 'UNKNOWN',
                 ip: clientIP,
                 reason: ipCheck.reason,
-                authType: 'IP Rate Limit',
+                authType: 'Private IP Rate Limit',
                 attemptCount: MAX_IP_ATTEMPTS
             });
 
@@ -308,7 +317,7 @@ exports.handler = async (event, context) => {
                 deviceId: 'MISSING',
                 ip: clientIP,
                 reason: 'Missing device ID',
-                authType: 'UDID Check',
+                authType: 'Private UDID Check',
                 attemptCount: 1
             });
 
@@ -327,7 +336,7 @@ exports.handler = async (event, context) => {
                 deviceId: deviceId,
                 ip: clientIP,
                 reason: rateCheck.reason,
-                authType: 'UDID Check',
+                authType: 'Private UDID Check',
                 attemptCount: MAX_ATTEMPTS
             });
 
@@ -344,30 +353,24 @@ exports.handler = async (event, context) => {
         // Check if device is authorized
         const isAuthorized = authorizedDevices.has(deviceId);
         
-        // Determine auth type
-        let authType = 'UDID Check';
-        if (username && password) {
-            authType = 'Credential Login';
-        }
-
         // Log the attempt
         await sendDiscordLog({
             success: isAuthorized,
             deviceId: deviceId,
             ip: clientIP,
-            reason: isAuthorized ? null : 'Device not in authorized list',
-            authType: authType,
+            reason: isAuthorized ? null : 'Device not in private authorized list',
+            authType: 'Private UDID Check',
             attemptCount: rateCheck.currentCount
         });
 
         if (!isAuthorized) {
-            console.log('Unauthorized device attempt:', deviceId);
+            console.log('Unauthorized device attempt on private endpoint:', deviceId);
             return {
                 statusCode: 401,
                 headers,
                 body: JSON.stringify({ 
                     verified: false,
-                    message: 'Device not authorized' 
+                    message: 'Device not authorized for private access' 
                 })
             };
         }
@@ -376,7 +379,8 @@ exports.handler = async (event, context) => {
         const token = generateJWT({
             deviceId: deviceId,
             authorized: true,
-            ip: clientIP
+            ip: clientIP,
+            privateAccess: true
         });
 
         if (!token) {
@@ -388,7 +392,7 @@ exports.handler = async (event, context) => {
             };
         }
 
-        console.log('Authorized device access granted:', deviceId.substring(0, 20) + '...');
+        console.log('✅ Private authorized device access granted:', deviceId.substring(0, 20) + '...');
 
         // Success response with JWT
         return {
@@ -399,20 +403,20 @@ exports.handler = async (event, context) => {
                 token: token,
                 deviceId: deviceId,
                 timestamp: Date.now(),
-                message: 'Device authorized'
+                message: 'Private device access authorized'
             })
         };
 
     } catch (error) {
-        console.error('Auth error:', error);
+        console.error('Private auth error:', error);
         
         // Log critical errors
         await sendDiscordLog({
             success: false,
             deviceId: 'ERROR',
             ip: event.headers['x-forwarded-for'] || 'unknown',
-            reason: 'Server error: ' + error.message,
-            authType: 'System Error',
+            reason: 'Private server error: ' + error.message,
+            authType: 'Private System Error',
             attemptCount: 1
         });
 
