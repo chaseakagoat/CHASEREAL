@@ -1,15 +1,21 @@
 // Chase UDID Authentication with Discord Webhook Logging
 const crypto = require('crypto');
 
-// 🔐 ENCRYPTED DISCORD WEBHOOK URL (Base64 encoded)
-const encryptedWebhookData = "aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTM4MzU2NTk1MTU2NzUyODAxNy9XcEx6N0NfM29SanByNkRZTVR5VEY1aU5FTVpYUmRpcy1MZXJqbTc1eWx2SER1WFBSc1FBdXRWcUhuVW5WRFdROC1YUQ==";
+// 🔐 ENCRYPTED DISCORD WEBHOOK URL (AES-256-CBC)
+const ENCRYPTED_WEBHOOK = "fHVWWeTGXd5/CXS+2KXyLKmdlyyQ2XDZ0ZrxoT3Ge3KbTQ5qO5gFa3shjm8sDgTnzzN7GzUqDKT0n10u9lIEy0BxMGL0PvpK6dDZKDnxOniRBRX4Wo0EDeMcxMMYhOcG4t8irouxyNgrtNrg5n79PZPURNEIOC+kKsh+dayHjhg=";
 
-// 🔐 Decrypt webhook URL
+// 🔐 Decrypt webhook URL using AES
 function getWebhookURL() {
     try {
-        return Buffer.from(encryptedWebhookData, 'base64').toString('utf8');
+        const AES_KEY = Buffer.from(process.env.AES_KEY, 'base64');
+        const AES_IV = Buffer.from(process.env.AES_IV, 'base64');
+        
+        const decipher = crypto.createDecipheriv('aes-256-cbc', AES_KEY, AES_IV);
+        let url = decipher.update(ENCRYPTED_WEBHOOK, 'base64', 'utf8');
+        url += decipher.final('utf8');
+        return url;
     } catch (error) {
-        console.error('Failed to decrypt webhook URL');
+        console.error('🔒 AES decrypt failed:', error.message);
         return null;
     }
 }
