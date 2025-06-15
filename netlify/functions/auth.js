@@ -1,20 +1,8 @@
-// 🔐 PRIVATE Chase UDID Authentication - ULTRA SECURE
+// Chase UDID Authentication with Discord Webhook Logging
 const crypto = require('crypto');
 
 // 🔐 ENCRYPTED DISCORD WEBHOOK URL (AES-256-CBC)
 const ENCRYPTED_WEBHOOK = "fHVWWeTGXd5/CXS+2KXyLKmdlyyQ2XDZ0ZrxoT3Ge3KbTQ5qO5gFa3shjm8sDgTnzzN7GzUqDKT0n10u9lIEy0BxMGL0PvpK6dDZKDnxOniRBRX4Wo0EDeMcxMMYhOcG4t8irouxyNgrtNrg5n79PZPURNEIOC+kKsh+dayHjhg=";
-
-// 🔐 PRIVATE ACCESS VERIFICATION
-function verifyPrivateAccess(headers) {
-    const providedKey = headers['x-private-key'];
-    const expectedKey = process.env.PRIVATE_KEY;
-    
-    if (!providedKey || !expectedKey) {
-        return false;
-    }
-    
-    return providedKey === expectedKey;
-}
 
 // 🔐 Decrypt webhook URL using AES
 function getWebhookURL() {
@@ -38,101 +26,19 @@ const authorizedDevices = new Set([
     // Add more authorized devices here
 ]);
 
-// 📊 Track login attempts for rate limiting (per device)
+// 📊 Track login attempts for rate limiting
 const loginAttempts = new Map();
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_TIME = 15 * 60 * 1000; // 15 minutes
 
-// 🚨 Track IP attempts for abuse detection
-const ipAttempts = new Map();
-const MAX_IP_ATTEMPTS = 20; // per hour
-const IP_LOCKOUT_TIME = 60 * 60 * 1000; // 1 hour
-
-// 🔐 JWT Helper Functions
-function generateJWT(payload) {
-    try {
-        const secret = process.env.JWT_SECRET;
-        if (!secret) {
-            console.error('JWT_SECRET not found in environment variables');
-            return null;
-        }
-        
-        const header = { alg: 'HS256', typ: 'JWT' };
-        const now = Math.floor(Date.now() / 1000);
-        
-        const jwtPayload = {
-            ...payload,
-            iat: now,
-            exp: now + (60 * 60), // 1 hour expiration
-            iss: 'chase-private-auth-system'
-        };
-        
-        const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
-        const encodedPayload = Buffer.from(JSON.stringify(jwtPayload)).toString('base64url');
-        
-        const signature = crypto
-            .createHmac('sha256', secret)
-            .update(`${encodedHeader}.${encodedPayload}`)
-            .digest('base64url');
-        
-        return `${encodedHeader}.${encodedPayload}.${signature}`;
-    } catch (error) {
-        console.error('JWT generation failed:', error);
-        return null;
-    }
-}
-
-// 🚨 Check IP rate limiting
-function checkIPRateLimit(ip) {
-    const now = Date.now();
-    
-    if (!ipAttempts.has(ip)) {
-        ipAttempts.set(ip, { count: 0, lastAttempt: now, lockedUntil: 0 });
-    }
-    
-    const attempts = ipAttempts.get(ip);
-    
-    if (attempts.lockedUntil > now) {
-        return {
-            allowed: false,
-            reason: "IP rate limited",
-            lockoutEnds: attempts.lockedUntil
-        };
-    }
-    
-    if (now - attempts.lastAttempt > IP_LOCKOUT_TIME) {
-        attempts.count = 0;
-    }
-    
-    attempts.count++;
-    attempts.lastAttempt = now;
-    
-    if (attempts.count >= MAX_IP_ATTEMPTS) {
-        attempts.lockedUntil = now + IP_LOCKOUT_TIME;
-        return {
-            allowed: false,
-            reason: "Too many IP attempts",
-            lockoutEnds: attempts.lockedUntil
-        };
-    }
-    
-    return {
-        allowed: true,
-        attemptsLeft: MAX_IP_ATTEMPTS - attempts.count
-    };
-}
-
 // 🚨 Send Discord webhook notification
 async function sendDiscordLog(data) {
     const webhookURL = getWebhookURL();
-    if (!webhookURL) {
-        console.error('❌ No webhook URL available - logging disabled');
-        return;
-    }
+    if (!webhookURL) return;
     
     try {
         const embed = {
-            title: data.success ? "✅ PRIVATE AUTH SUCCESS" : "❌ PRIVATE AUTH FAILED",
+            title: data.success ? "✅ SUCCESSFUL LOGIN" : "❌ FAILED LOGIN ATTEMPT",
             color: data.success ? 0x00ff00 : 0xff0000,
             fields: [
                 {
@@ -142,7 +48,7 @@ async function sendDiscordLog(data) {
                 },
                 {
                     name: "📱 Status",
-                    value: data.success ? "Private Access Granted" : "Private Access Denied",
+                    value: data.success ? "Authorized Access" : "Unauthorized Attempt",
                     inline: true
                 },
                 {
@@ -157,7 +63,7 @@ async function sendDiscordLog(data) {
                 },
                 {
                     name: "🔒 Auth Type",
-                    value: "PRIVATE ENDPOINT",
+                    value: data.authType || "UDID Check",
                     inline: true
                 },
                 {
@@ -167,7 +73,7 @@ async function sendDiscordLog(data) {
                 }
             ],
             footer: {
-                text: "🔐 Chase Private Security Monitor",
+                text: "Chase Security Monitor",
                 icon_url: "https://cdn-icons-png.flaticon.com/512/174/174857.png"
             },
             timestamp: new Date().toISOString()
@@ -181,13 +87,21 @@ async function sendDiscordLog(data) {
             });
         }
 
+        if (data.attemptCount >= 3) {
+            embed.fields.push({
+                name: "🚨 Security Alert",
+                value: "Multiple failed attempts detected!",
+                inline: false
+            });
+        }
+
         const payload = {
             embeds: [embed],
-            username: "🔐 Chase Private Security Bot",
+            username: "Chase Security Bot",
             avatar_url: "https://cdn-icons-png.flaticon.com/512/3064/3064197.png"
         };
 
-        const response = await fetch(webhookURL, {
+        await fetch(webhookURL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -195,16 +109,12 @@ async function sendDiscordLog(data) {
             body: JSON.stringify(payload)
         });
 
-        if (!response.ok) {
-            console.error('Discord webhook failed:', response.status);
-        }
-
     } catch (error) {
-        console.error('Discord webhook error:', error);
+        console.error('Discord webhook failed:', error);
     }
 }
 
-// 🔐 Check device rate limiting
+// 🔐 Check and update rate limiting
 function checkRateLimit(deviceId, ip) {
     const key = `${deviceId}_${ip}`;
     const now = Date.now();
@@ -215,6 +125,7 @@ function checkRateLimit(deviceId, ip) {
     
     const attempts = loginAttempts.get(key);
     
+    // Check if currently locked out
     if (attempts.lockedUntil > now) {
         return {
             allowed: false,
@@ -224,6 +135,7 @@ function checkRateLimit(deviceId, ip) {
         };
     }
     
+    // Reset if last attempt was over 1 hour ago
     if (now - attempts.lastAttempt > 60 * 60 * 1000) {
         attempts.count = 0;
     }
@@ -252,7 +164,7 @@ exports.handler = async (event, context) => {
     // Handle CORS
     const headers = {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Private-Key',
+        'Access-Control-Allow-Headers': 'Content-Type',
         'Access-Control-Allow-Methods': 'POST, OPTIONS'
     };
 
@@ -268,48 +180,16 @@ exports.handler = async (event, context) => {
         };
     }
 
-    // 🔐 VERIFY PRIVATE ACCESS FIRST
-    if (!verifyPrivateAccess(event.headers)) {
-        console.log('❌ Unauthorized access attempt to private endpoint');
-        return {
-            statusCode: 403,
-            headers,
-            body: JSON.stringify({ message: 'Forbidden - Private endpoint' })
-        };
-    }
-
     try {
         const { deviceId, username, password } = JSON.parse(event.body);
         
         // Get client IP
-        const clientIP = event.headers['x-forwarded-for']?.split(',')[0] || 
+        const clientIP = event.headers['x-forwarded-for'] || 
                         event.headers['x-real-ip'] || 
                         context.clientContext?.ip || 
                         'unknown';
 
-        console.log('🔐 Private auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
-
-        // Check IP rate limiting first
-        const ipCheck = checkIPRateLimit(clientIP);
-        if (!ipCheck.allowed) {
-            await sendDiscordLog({
-                success: false,
-                deviceId: deviceId || 'UNKNOWN',
-                ip: clientIP,
-                reason: ipCheck.reason,
-                authType: 'Private IP Rate Limit',
-                attemptCount: MAX_IP_ATTEMPTS
-            });
-
-            return {
-                statusCode: 429,
-                headers,
-                body: JSON.stringify({ 
-                    message: 'IP temporarily blocked due to abuse',
-                    lockoutEnds: ipCheck.lockoutEnds
-                })
-            };
-        }
+        console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
 
         if (!deviceId) {
             await sendDiscordLog({
@@ -317,7 +197,7 @@ exports.handler = async (event, context) => {
                 deviceId: 'MISSING',
                 ip: clientIP,
                 reason: 'Missing device ID',
-                authType: 'Private UDID Check',
+                authType: 'UDID Check',
                 attemptCount: 1
             });
 
@@ -328,7 +208,7 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Check device rate limiting
+        // Check rate limiting
         const rateCheck = checkRateLimit(deviceId, clientIP);
         if (!rateCheck.allowed) {
             await sendDiscordLog({
@@ -336,7 +216,7 @@ exports.handler = async (event, context) => {
                 deviceId: deviceId,
                 ip: clientIP,
                 reason: rateCheck.reason,
-                authType: 'Private UDID Check',
+                authType: 'UDID Check',
                 attemptCount: MAX_ATTEMPTS
             });
 
@@ -353,70 +233,58 @@ exports.handler = async (event, context) => {
         // Check if device is authorized
         const isAuthorized = authorizedDevices.has(deviceId);
         
+        // Determine auth type
+        let authType = 'UDID Check';
+        if (username && password) {
+            authType = 'Credential Login';
+        }
+
         // Log the attempt
         await sendDiscordLog({
             success: isAuthorized,
             deviceId: deviceId,
             ip: clientIP,
-            reason: isAuthorized ? null : 'Device not in private authorized list',
-            authType: 'Private UDID Check',
+            reason: isAuthorized ? null : 'Device not in authorized list',
+            authType: authType,
             attemptCount: rateCheck.currentCount
         });
 
         if (!isAuthorized) {
-            console.log('Unauthorized device attempt on private endpoint:', deviceId);
+            console.log('Unauthorized device attempt:', deviceId);
             return {
                 statusCode: 401,
                 headers,
                 body: JSON.stringify({ 
                     verified: false,
-                    message: 'Device not authorized for private access' 
+                    message: 'Device not authorized' 
                 })
             };
         }
 
-        // Generate secure JWT token
-        const token = generateJWT({
-            deviceId: deviceId,
-            authorized: true,
-            ip: clientIP,
-            privateAccess: true
-        });
+        console.log('Authorized device access granted:', deviceId.substring(0, 20) + '...');
 
-        if (!token) {
-            console.error('Failed to generate JWT token');
-            return {
-                statusCode: 500,
-                headers,
-                body: JSON.stringify({ message: 'Authentication token generation failed' })
-            };
-        }
-
-        console.log('✅ Private authorized device access granted:', deviceId.substring(0, 20) + '...');
-
-        // Success response with JWT
+        // Success response
         return {
             statusCode: 200,
             headers,
             body: JSON.stringify({
                 verified: true,
-                token: token,
                 deviceId: deviceId,
                 timestamp: Date.now(),
-                message: 'Private device access authorized'
+                message: 'Device authorized'
             })
         };
 
     } catch (error) {
-        console.error('Private auth error:', error);
+        console.error('Auth error:', error);
         
         // Log critical errors
         await sendDiscordLog({
             success: false,
             deviceId: 'ERROR',
             ip: event.headers['x-forwarded-for'] || 'unknown',
-            reason: 'Private server error: ' + error.message,
-            authType: 'Private System Error',
+            reason: 'Server error: ' + error.message,
+            authType: 'System Error',
             attemptCount: 1
         });
 
