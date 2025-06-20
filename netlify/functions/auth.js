@@ -1,30 +1,30 @@
-// Chase UDID Authentication with Discord Webhook Logging
-const crypto = require('crypto');
+// Chase KEY Authentication with Discord Webhook Logging
 
-// 🔐 ENCRYPTED DISCORD WEBHOOK URL (AES-256-CBC)
-const ENCRYPTED_WEBHOOK = "fHVWWeTGXd5/CXS+2KXyLKmdlyyQ2XDZ0ZrxoT3Ge3KbTQ5qO5gFa3shjm8sDgTnzzN7GzUqDKT0n10u9lIEy0BxMGL0PvpK6dDZKDnxOniRBRX4Wo0EDeMcxMMYhOcG4t8irouxyNgrtNrg5n79PZPURNEIOC+kKsh+dayHjhg=";
-
-// 🔐 Decrypt webhook URL using AES
+// 🔐 ENCRYPTED DISCORD WEBHOOK URL (Base64 encoded)
 function getWebhookURL() {
     try {
-        const AES_KEY = Buffer.from(process.env.AES_KEY, 'base64');
-        const AES_IV = Buffer.from(process.env.AES_IV, 'base64');
-        
-        const decipher = crypto.createDecipheriv('aes-256-cbc', AES_KEY, AES_IV);
-        let url = decipher.update(ENCRYPTED_WEBHOOK, 'base64', 'utf8');
-        url += decipher.final('utf8');
-        return url;
+        const encoded = "aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTM4MzU2NTk1MTU2NzUyODAxNy9XcEx6N0NfM29SanByNkRZTVR5VEY1aU5FTVpYUmRpcy1MZXJqbTc1eWx2SER1WFBSc1FBdXRWcUhuVW5WRFdROC1YUQ==";
+        return Buffer.from(encoded, 'base64').toString('utf8');
     } catch (error) {
-        console.error('🔒 AES decrypt failed:', error.message);
+        console.error('Failed to decrypt webhook URL');
         return null;
     }
 }
 
-// 🔐 Authorized device UDIDs
-const authorizedDevices = new Set([
-    "stable_2992280087542020475_11759857", // Your device UDID
-    // Add more authorized devices here
+// 🔑 VALID KEYS (One-time use keys)
+const validKeys = new Map([
+    ["testkey123", "TestUser"],
+    ["mypassword", "MyUser"], 
+    ["demo2024", "DemoUser"],
+    ["admin123", "AdminUser"],
+    ["chase2024", "ChaseUser"],
+    ["helloworld", "HelloUser"],
+    ["password123", "PassUser"],
+    ["secure123", "SecureUser"]
 ]);
+
+// 📱 Track authorized devices (after successful key login)
+const authorizedDevices = new Map();
 
 // 📊 Track login attempts for rate limiting
 const loginAttempts = new Map();
@@ -43,7 +43,12 @@ async function sendDiscordLog(data) {
             fields: [
                 {
                     name: "🔍 Device ID",
-                    value: `\`${data.deviceId.substring(0, 20)}...\``,
+                    value: `\`${data.deviceId ? data.deviceId.substring(0, 15) + '...' : 'Unknown'}\``,
+                    inline: true
+                },
+                {
+                    name: "👤 Username",
+                    value: data.username || "Unknown",
                     inline: true
                 },
                 {
@@ -63,12 +68,7 @@ async function sendDiscordLog(data) {
                 },
                 {
                     name: "🔒 Auth Type",
-                    value: data.authType || "UDID Check",
-                    inline: true
-                },
-                {
-                    name: "📊 Attempt Count",
-                    value: data.attemptCount?.toString() || "1",
+                    value: data.authType || "Key Login",
                     inline: true
                 }
             ],
@@ -87,11 +87,11 @@ async function sendDiscordLog(data) {
             });
         }
 
-        if (data.attemptCount >= 3) {
+        if (data.keyUsed) {
             embed.fields.push({
-                name: "🚨 Security Alert",
-                value: "Multiple failed attempts detected!",
-                inline: false
+                name: "🔑 Key Used",
+                value: `\`${data.keyUsed.substring(0, 6)}...\``,
+                inline: true
             });
         }
 
@@ -181,7 +181,7 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        const { deviceId, username, password } = JSON.parse(event.body);
+        const { key, deviceId, username, password, authType, success } = JSON.parse(event.body);
         
         // Get client IP
         const clientIP = event.headers['x-forwarded-for'] || 
@@ -189,22 +189,69 @@ exports.handler = async (event, context) => {
                         context.clientContext?.ip || 
                         'unknown';
 
-        console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 20) + '...');
+        console.log('Auth request from IP:', clientIP, 'Device:', deviceId?.substring(0, 15) + '...', 'Type:', authType);
 
-        if (!deviceId) {
+        // Handle Face ID result logging
+        if (authType && authType.includes('FaceID')) {
+            await sendDiscordLog({
+                success: success === true,
+                deviceId: deviceId,
+                ip: clientIP,
+                reason: success === true ? null : 'Face ID authentication failed',
+                authType: authType,
+                attemptCount: 1,
+                username: authorizedDevices.get(deviceId) || 'Unknown'
+            });
+
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({
+                    logged: true,
+                    timestamp: Date.now()
+                })
+            };
+        }
+
+        // Handle device authorization check (for Face ID)
+        if (!key && deviceId) {
+            const isAuthorized = authorizedDevices.has(deviceId);
+            
+            await sendDiscordLog({
+                success: isAuthorized,
+                deviceId: deviceId,
+                ip: clientIP,
+                reason: isAuthorized ? null : 'Device not authorized for Face ID',
+                authType: 'Device Check',
+                attemptCount: 1,
+                username: authorizedDevices.get(deviceId) || 'Unknown'
+            });
+
+            return {
+                statusCode: 200,
+                headers,
+                body: JSON.stringify({
+                    verified: isAuthorized,
+                    username: authorizedDevices.get(deviceId),
+                    message: isAuthorized ? 'Device authorized' : 'Device not authorized'
+                })
+            };
+        }
+
+        if (!key || !deviceId) {
             await sendDiscordLog({
                 success: false,
-                deviceId: 'MISSING',
+                deviceId: deviceId || 'MISSING',
                 ip: clientIP,
-                reason: 'Missing device ID',
-                authType: 'UDID Check',
+                reason: 'Missing key or device ID',
+                authType: 'Key Login',
                 attemptCount: 1
             });
 
             return {
                 statusCode: 400,
                 headers,
-                body: JSON.stringify({ message: 'Missing deviceId' })
+                body: JSON.stringify({ message: 'Missing key or deviceId' })
             };
         }
 
@@ -216,8 +263,9 @@ exports.handler = async (event, context) => {
                 deviceId: deviceId,
                 ip: clientIP,
                 reason: rateCheck.reason,
-                authType: 'UDID Check',
-                attemptCount: MAX_ATTEMPTS
+                authType: 'Key Login',
+                attemptCount: MAX_ATTEMPTS,
+                keyUsed: key
             });
 
             return {
@@ -230,55 +278,87 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Check if device is authorized
-        const isAuthorized = authorizedDevices.has(deviceId);
-        
-        // Determine auth type
-        let authType = 'UDID Check';
-        if (username && password) {
-            authType = 'Credential Login';
-        }
+        // Check if key is valid
+        if (!validKeys.has(key)) {
+            // Check if device is already authorized (returning user)
+            if (authorizedDevices.has(deviceId)) {
+                const username = authorizedDevices.get(deviceId);
+                
+                await sendDiscordLog({
+                    success: true,
+                    deviceId: deviceId,
+                    ip: clientIP,
+                    reason: null,
+                    authType: 'Returning User',
+                    attemptCount: rateCheck.currentCount,
+                    username: username
+                });
 
-        // Log the attempt
-        await sendDiscordLog({
-            success: isAuthorized,
-            deviceId: deviceId,
-            ip: clientIP,
-            reason: isAuthorized ? null : 'Device not in authorized list',
-            authType: authType,
-            attemptCount: rateCheck.currentCount
-        });
+                return {
+                    statusCode: 200,
+                    headers,
+                    body: JSON.stringify({
+                        verified: true,
+                        username: username
+                    })
+                };
+            }
 
-        if (!isAuthorized) {
-            console.log('Unauthorized device attempt:', deviceId);
+            // Invalid key and not authorized device
+            await sendDiscordLog({
+                success: false,
+                deviceId: deviceId,
+                ip: clientIP,
+                reason: 'Invalid key',
+                authType: 'Key Login',
+                attemptCount: rateCheck.currentCount,
+                keyUsed: key
+            });
+
             return {
                 statusCode: 401,
                 headers,
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     verified: false,
-                    message: 'Device not authorized' 
+                    message: "Invalid or already used key"
                 })
             };
         }
 
-        console.log('Authorized device access granted:', deviceId.substring(0, 20) + '...');
+        // Key is valid - get username and authorize device
+        const username = validKeys.get(key);
+        
+        // Save device for future Face ID access
+        authorizedDevices.set(deviceId, username);
+        
+        // Remove key so it can't be reused
+        validKeys.delete(key);
+        
+        await sendDiscordLog({
+            success: true,
+            deviceId: deviceId,
+            ip: clientIP,
+            reason: null,
+            authType: 'Successful Key Login',
+            attemptCount: rateCheck.currentCount,
+            username: username,
+            keyUsed: key
+        });
 
-        // Success response
+        console.log('Successful key login - Device authorized for Face ID:', deviceId.substring(0, 15) + '...');
+
         return {
             statusCode: 200,
             headers,
             body: JSON.stringify({
                 verified: true,
-                deviceId: deviceId,
-                timestamp: Date.now(),
-                message: 'Device authorized'
+                username: username
             })
         };
 
     } catch (error) {
         console.error('Auth error:', error);
         
-        // Log critical errors
         await sendDiscordLog({
             success: false,
             deviceId: 'ERROR',
