@@ -1,9 +1,31 @@
-// ========================================
-// FIXED STORAGE + YOUR AUTH HANDLER
-// ========================================
+const admin = require('firebase-admin');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
+// Initialize Firebase Admin (only once)
+if (!admin.apps.length) {
+    admin.initializeApp({
+        credential: admin.credential.cert({
+            type: "service_account",
+            project_id: process.env.FIREBASE_PROJECT_ID,
+            private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+            private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+            client_email: process.env.FIREBASE_CLIENT_EMAIL,
+            client_id: process.env.FIREBASE_CLIENT_ID,
+            auth_uri: "https://accounts.google.com/o/oauth2/auth",
+            token_uri: "https://oauth2.googleapis.com/token",
+            auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+            universe_domain: "googleapis.com"
+        })
+    });
+}
+
+const db = admin.firestore();
+
+const COLLECTION_SESSIONS = 'sessions';
+const COLLECTION_DEVICES = 'devices';
+const COLLECTION_KEYS = 'keys';
 
 // CONFIGURATION
-
 const VALID_KEYS = new Map([
     ["demo1233", { username: "DemoUser", tier: "basic" }],
     ["test456", { username: "TestUser", tier: "premium" }],
@@ -26,39 +48,39 @@ const HTTP_HEADERS = {
     'Content-Type': 'application/json'
 };
 
-// PERSISTENT STORAGE (IN-MEMORY MOCK FOR NOW)
-const storage = new Map();
-
-function saveToStorage(key, data) {
+// FIRESTORE HELPERS
+async function saveToFirestore(collection, docId, data) {
     try {
-        storage.set(key, {
+        await db.collection(collection).doc(docId).set({
             ...data,
-            savedAt: Date.now(),
+            savedAt: admin.firestore.FieldValue.serverTimestamp(),
             version: '2.0'
-        });
-        console.log('💾 Saved:', key);
+        }, { merge: true });
+        console.log('💾 Saved:', collection, docId);
         return true;
-    } catch (e) {
-        console.error('Storage save failed:', e);
+    } catch (error) {
+        console.error('Firestore save failed:', error);
         return false;
     }
 }
 
-function loadFromStorage(key) {
+async function loadFromFirestore(collection, docId) {
     try {
-        const data = storage.get(key);
-        if (!data) return null;
-
-        console.log('📖 Loaded:', key, 'Age:', Math.round((Date.now() - (data.savedAt || 0)) / 1000) + 's');
+        const doc = await db.collection(collection).doc(docId).get();
+        if (!doc.exists) {
+            console.log('📖 Document not found:', collection, docId);
+            return null;
+        }
+        const data = doc.data();
+        console.log('📖 Loaded:', collection, docId);
         return data;
-    } catch (e) {
-        console.error('Storage load failed for', key, ':', e);
+    } catch (error) {
+        console.error('Firestore load failed:', error);
         return null;
     }
 }
 
 // UTILS
-
 function createStableDeviceId(deviceId, userAgent = '', ip = '') {
     const combined = `${deviceId}|${userAgent.substring(0, 50)}|${ip}|stable_salt_2024`;
     let hash = 0;
@@ -85,7 +107,6 @@ function getUserAgent(event) {
 }
 
 // MAIN HANDLER
-
 exports.handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 200, headers: HTTP_HEADERS, body: '' };
@@ -140,16 +161,16 @@ exports.handler = async (event) => {
         const username = keyData.username;
         const tier = keyData.tier;
 
-        const deviceStorageKey = `DEVICE_${stableDeviceId}`;
-        const keyStorageKey = `KEY_${key}`;
-        const sessionStorageKey = `SESSION_${stableDeviceId}_${key}`;
-
-        const existingSession = loadFromStorage(sessionStorageKey);
-        if (existingSession && existingSession.key === key && existingSession.username) {
-            existingSession.loginCount = (existingSession.loginCount || 0) + 1;
-            existingSession.lastLogin = Date.now();
-            existingSession.lastIP = clientIP;
-            saveToStorage(sessionStorageKey, existingSession);
+        // Check existing session
+        const sessionData = await loadFromFirestore(COLLECTION_SESSIONS, `${stableDeviceId}_${key}`);
+        if (sessionData && sessionData.key === key && sessionData.username) {
+            const updatedSession = {
+                ...sessionData,
+                loginCount: (sessionData.loginCount || 0) + 1,
+                lastLogin: Date.now(),
+                lastIP: clientIP
+            };
+            await saveToFirestore(COLLECTION_SESSIONS, `${stableDeviceId}_${key}`, updatedSession);
 
             return {
                 statusCode: 200,
@@ -161,21 +182,25 @@ exports.handler = async (event) => {
                     sessionToken: generateSessionToken(),
                     tier,
                     deviceLocked: true,
-                    loginCount: existingSession.loginCount,
+                    loginCount: updatedSession.loginCount,
                     fastLogin: true
                 })
             };
         }
 
-        const deviceData = loadFromStorage(deviceStorageKey);
+        // Check device binding
+        const deviceData = await loadFromFirestore(COLLECTION_DEVICES, stableDeviceId);
         if (deviceData && deviceData.key === key) {
             const loginCount = (deviceData.loginCount || 0) + 1;
-            deviceData.loginCount = loginCount;
-            deviceData.lastLogin = Date.now();
-            deviceData.lastIP = clientIP;
-            saveToStorage(deviceStorageKey, deviceData);
+            const updatedDevice = {
+                ...deviceData,
+                loginCount,
+                lastLogin: Date.now(),
+                lastIP: clientIP
+            };
+            await saveToFirestore(COLLECTION_DEVICES, stableDeviceId, updatedDevice);
 
-            const sessionData = {
+            const newSession = {
                 key,
                 username,
                 tier,
@@ -185,7 +210,7 @@ exports.handler = async (event) => {
                 lastIP: clientIP,
                 sessionCreated: Date.now()
             };
-            saveToStorage(sessionStorageKey, sessionData);
+            await saveToFirestore(COLLECTION_SESSIONS, `${stableDeviceId}_${key}`, newSession);
 
             return {
                 statusCode: 200,
@@ -203,8 +228,9 @@ exports.handler = async (event) => {
             };
         }
 
-        const keyBindingData = loadFromStorage(keyStorageKey);
-        if (keyBindingData && keyBindingData.deviceId !== stableDeviceId) {
+        // Check if key is bound to different device
+        const keyBinding = await loadFromFirestore(COLLECTION_KEYS, key);
+        if (keyBinding && keyBinding.deviceId !== stableDeviceId) {
             console.log('❌ Key locked to different device');
             return {
                 statusCode: 401,
@@ -216,7 +242,9 @@ exports.handler = async (event) => {
             };
         }
 
+        // New device/key binding
         const now = Date.now();
+
         const newDeviceData = {
             key,
             username,
@@ -247,23 +275,14 @@ exports.handler = async (event) => {
             sessionCreated: now
         };
 
-        const savedDevice = saveToStorage(deviceStorageKey, newDeviceData);
-        const savedKey = saveToStorage(keyStorageKey, newKeyBinding);
-        const savedSession = saveToStorage(sessionStorageKey, newSessionData);
-
-        if (!savedDevice || !savedKey || !savedSession) {
-            return {
-                statusCode: 500,
-                headers: HTTP_HEADERS,
-                body: JSON.stringify({
-                    verified: false,
-                    message: "Unable to complete device registration."
-                })
-            };
-        }
+        // Save all data
+        await saveToFirestore(COLLECTION_DEVICES, stableDeviceId, newDeviceData);
+        await saveToFirestore(COLLECTION_KEYS, key, newKeyBinding);
+        await saveToFirestore(COLLECTION_SESSIONS, `${stableDeviceId}_${key}`, newSessionData);
 
         console.log('✅ NEW KEY CLAIMED AND LOCKED - User:', username);
 
+        // OPTIONAL: Discord logging
         await logToDiscord({
             success: true,
             username,
@@ -299,9 +318,6 @@ exports.handler = async (event) => {
 };
 
 // DISCORD LOGGING
-
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-
 async function logToDiscord(data) {
     const webhookURL = process.env.DISCORD_WEBHOOK_URL;
     if (!webhookURL) return;
@@ -319,6 +335,7 @@ async function logToDiscord(data) {
                         { name: "Device", value: data.deviceId, inline: true },
                         { name: "Type", value: data.newClaim ? "New Claim" : "Returning", inline: true },
                         { name: "Tier", value: data.tier, inline: true },
+                        { name: "IP", value: data.ip, inline: true },
                         { name: "Time", value: new Date().toISOString(), inline: true }
                     ]
                 }]
