@@ -3,7 +3,7 @@
 
 // 🔑 AVAILABLE KEYS (Once claimed, locked to that device forever)
 const validKeys = new Map([
-    ["demo123", { username: "DemoUser", tier: "basic", created: Date.now() }],
+    ["demo1233", { username: "DemoUser", tier: "basic", created: Date.now() }],
     ["test456", { username: "TestUser", tier: "premium", created: Date.now() }],
     ["admin789", { username: "AdminUser", tier: "admin", created: Date.now() }],
     ["mykey2024", { username: "MyUser", tier: "basic", created: Date.now() }],
