@@ -3,9 +3,14 @@
 
 const crypto = require('crypto');
 
-// 🔑 PERMANENT KEYS (Each key can only be claimed by ONE person, but unlimited use after claim)
 const validKeys = new Map([
-    // Add your own keys here - format: ["keyname", { tier: "basic/premium/admin", maxDevices: number }]
+    // Sample keys - replace with your own
+    ["CHASE2025-PREMIUM-001", { username: "VIP User", tier: "premium", maxDevices: 3 }],
+    ["CHASE2025-BASIC-002", { username: "Standard User", tier: "basic", maxDevices: 2 }],
+    ["CHASE2025-ADMIN-003", { username: "Admin User", tier: "admin", maxDevices: 5 }],
+    ["TESTKEY-DEV-001", { username: "Test User", tier: "basic", maxDevices: 1 }],
+    ["DEMO-KEY-123", { username: "Demo User", tier: "premium", maxDevices: 2 }]
+    // Add your own keys here - format: ["keyname", { username: "Display Name", tier: "basic/premium/admin", maxDevices: number }]
     // Keys will be claimed on first use and locked to that user permanently
 ]);
 
