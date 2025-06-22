@@ -9,6 +9,7 @@ const validKeys = new Map([
     ["mykey2024", { username: "MyUser", tier: "basic", created: Date.now() }],
       ["JAIQlqp@12", { username: "Promo@chase.com", tier: "gold", created: Date.now() }],
       ["XLao192", { username: "@top_burglar@chase.com", tier: "gold", created: Date.now() }],
+    ["alqm192&", { username: "@plugzzdem@chase.com", tier: "premium", created: Date.now() }],
     ["secure2024", { username: "SecureUser", tier: "premium", created: Date.now() }],
     // Add your own keys here
 ]);
