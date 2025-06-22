@@ -1,5 +1,5 @@
-// 🔒 BULLETPROOF DEVICE-LOCKED AUTHENTICATION
-// Fixed to prevent blocking legitimate users
+// 🔒 SUPER STABLE DEVICE-LOCKED AUTHENTICATION
+// Fixed to handle app exits/restarts and maintain device sessions
 
 // ========================================
 // CONFIGURATION
@@ -24,12 +24,17 @@ const HTTP_HEADERS = {
 };
 
 // ========================================
-// SIMPLE STORAGE FUNCTIONS
+// ROBUST STORAGE FUNCTIONS
 // ========================================
 
 function saveToStorage(key, data) {
     try {
-        process.env[key] = JSON.stringify(data);
+        process.env[key] = JSON.stringify({
+            ...data,
+            savedAt: Date.now(),
+            version: '2.0'
+        });
+        console.log('💾 Saved:', key);
         return true;
     } catch (e) {
         console.error('Storage save failed:', e);
@@ -40,41 +45,63 @@ function saveToStorage(key, data) {
 function loadFromStorage(key) {
     try {
         const data = process.env[key];
-        return data ? JSON.parse(data) : null;
+        if (!data) return null;
+        
+        const parsed = JSON.parse(data);
+        // Validate data structure
+        if (!parsed || typeof parsed !== 'object') return null;
+        
+        console.log('📖 Loaded:', key, 'Age:', Math.round((Date.now() - (parsed.savedAt || 0)) / 1000) + 's');
+        return parsed;
     } catch (e) {
-        console.error('Storage load failed:', e);
+        console.error('Storage load failed for', key, ':', e);
         return null;
     }
 }
 
 // ========================================
-// UTILITY FUNCTIONS
+// IMPROVED DEVICE FINGERPRINTING
 // ========================================
 
-function createDeviceId(deviceId, ip = '') {
-    // Create a consistent device identifier
+function createStableDeviceId(deviceId, userAgent = '', ip = '') {
+    // Create multiple fallback device identifiers
+    const primaryId = deviceId || 'unknown';
+    const secondaryId = userAgent.substring(0, 50) || 'unknown';
+    const tertiaryId = ip || 'unknown';
+    
+    // Combine all identifiers
+    const combined = `${primaryId}|${secondaryId}|${tertiaryId}|stable_salt_2024`;
+    
+    // Create hash
     let hash = 0;
-    const str = deviceId + ip + 'salt2024';
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
+    for (let i = 0; i < combined.length; i++) {
+        const char = combined.charCodeAt(i);
         hash = ((hash << 5) - hash) + char;
         hash = hash & hash;
     }
-    return Math.abs(hash).toString(36);
+    
+    const finalId = Math.abs(hash).toString(36);
+    console.log('🔐 Device ID created:', finalId.substring(0, 8) + '...', 'from:', primaryId.substring(0, 8) + '...');
+    return finalId;
 }
 
-function generateToken() {
-    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+function generateSessionToken() {
+    return Math.random().toString(36).substring(2) + Date.now().toString(36) + Math.random().toString(36).substring(2);
 }
 
 function getClientIP(event, context) {
     return event.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
            event.headers['x-real-ip'] || 
+           event.headers['cf-connecting-ip'] ||
            'unknown';
 }
 
+function getUserAgent(event) {
+    return event.headers['user-agent'] || '';
+}
+
 // ========================================
-// MAIN HANDLER - SIMPLIFIED AND RELIABLE
+// MAIN HANDLER - ULTRA STABLE
 // ========================================
 
 exports.handler = async (event, context) => {
@@ -93,11 +120,12 @@ exports.handler = async (event, context) => {
     }
 
     try {
-        // Parse request
+        // Parse request with better error handling
         let requestBody;
         try {
             requestBody = JSON.parse(event.body || '{}');
         } catch (e) {
+            console.error('JSON parse error:', e);
             return {
                 statusCode: 400,
                 headers: HTTP_HEADERS,
@@ -105,22 +133,27 @@ exports.handler = async (event, context) => {
             };
         }
 
-        const { key, deviceId } = requestBody;
+        const { key, deviceId, sessionToken } = requestBody;
         
+        // Get client info
+        const clientIP = getClientIP(event, context);
+        const userAgent = getUserAgent(event);
+        
+        console.log('🔐 Auth request - Key:', key?.substring(0, 4) + '...', 'Device:', deviceId?.substring(0, 8) + '...', 'IP:', clientIP);
+
         // Basic validation
         if (!key || !deviceId || key.trim() === '' || deviceId.trim() === '') {
+            console.log('❌ Missing key or deviceId');
             return {
                 statusCode: 400,
                 headers: HTTP_HEADERS,
-                body: JSON.stringify({ verified: false, message: 'Missing key or device ID' })
+                body: JSON.stringify({ verified: false, message: 'Missing authentication data' })
             };
         }
 
-        const clientIP = getClientIP(event, context);
-        const finalDeviceId = createDeviceId(deviceId, clientIP);
+        // Create stable device identifier
+        const stableDeviceId = createStableDeviceId(deviceId, userAgent, clientIP);
         
-        console.log('🔐 Auth request - Key:', key.substring(0, 4) + '...', 'Device:', finalDeviceId.substring(0, 8) + '...');
-
         // Check if key is valid
         if (!VALID_KEYS.has(key)) {
             console.log('❌ Invalid key:', key.substring(0, 4) + '...');
@@ -139,21 +172,31 @@ exports.handler = async (event, context) => {
         const tier = keyData.tier || 'basic';
 
         // ========================================
-        // DEVICE BINDING LOGIC
+        // ENHANCED DEVICE BINDING LOGIC
         // ========================================
 
-        const deviceStorageKey = `DEVICE_${finalDeviceId}`;
+        const deviceStorageKey = `DEVICE_${stableDeviceId}`;
         const keyStorageKey = `KEY_${key}`;
+        const sessionStorageKey = `SESSION_${stableDeviceId}_${key}`;
 
-        // Check if this device already has this key
-        const deviceData = loadFromStorage(deviceStorageKey);
-        if (deviceData && deviceData.key === key) {
-            // ✅ EXISTING USER ON SAME DEVICE
-            deviceData.loginCount = (deviceData.loginCount || 0) + 1;
-            deviceData.lastLogin = Date.now();
-            saveToStorage(deviceStorageKey, deviceData);
+        console.log('🔍 Checking storage keys:', {
+            device: deviceStorageKey.substring(0, 20) + '...',
+            key: keyStorageKey.substring(0, 15) + '...',
+            session: sessionStorageKey.substring(0, 25) + '...'
+        });
 
-            console.log('✅ Returning user - User:', username, 'Logins:', deviceData.loginCount);
+        // Check for existing session first (fastest path for returning users)
+        const existingSession = loadFromStorage(sessionStorageKey);
+        if (existingSession && existingSession.key === key && existingSession.username) {
+            // ✅ VALID EXISTING SESSION - Super fast path
+            existingSession.loginCount = (existingSession.loginCount || 0) + 1;
+            existingSession.lastLogin = Date.now();
+            existingSession.lastIP = clientIP;
+            
+            // Update session
+            saveToStorage(sessionStorageKey, existingSession);
+            
+            console.log('⚡ Fast session login - User:', username, 'Logins:', existingSession.loginCount);
 
             return {
                 statusCode: 200,
@@ -161,27 +204,73 @@ exports.handler = async (event, context) => {
                 body: JSON.stringify({
                     verified: true,
                     username: username,
-                    message: `Welcome back, ${username}! Login #${deviceData.loginCount}`,
-                    sessionToken: generateToken(),
+                    message: `Welcome back, ${username}! (Session restored)`,
+                    sessionToken: generateSessionToken(),
                     tier: tier,
                     deviceLocked: true,
-                    loginCount: deviceData.loginCount
+                    loginCount: existingSession.loginCount,
+                    fastLogin: true
                 })
             };
         }
 
-        // Check if key is already bound to another device
+        // Check device binding
+        const deviceData = loadFromStorage(deviceStorageKey);
+        if (deviceData && deviceData.key === key) {
+            // ✅ DEVICE HAS THIS KEY - Restore session
+            const loginCount = (deviceData.loginCount || 0) + 1;
+            
+            // Update device data
+            deviceData.loginCount = loginCount;
+            deviceData.lastLogin = Date.now();
+            deviceData.lastIP = clientIP;
+            saveToStorage(deviceStorageKey, deviceData);
+            
+            // Create/update session
+            const sessionData = {
+                key: key,
+                username: username,
+                tier: tier,
+                deviceId: stableDeviceId,
+                loginCount: loginCount,
+                lastLogin: Date.now(),
+                lastIP: clientIP,
+                sessionCreated: Date.now()
+            };
+            saveToStorage(sessionStorageKey, sessionData);
+
+            console.log('✅ Device login restored - User:', username, 'Logins:', loginCount);
+
+            return {
+                statusCode: 200,
+                headers: HTTP_HEADERS,
+                body: JSON.stringify({
+                    verified: true,
+                    username: username,
+                    message: `Welcome back, ${username}! Your session has been restored.`,
+                    sessionToken: generateSessionToken(),
+                    tier: tier,
+                    deviceLocked: true,
+                    loginCount: loginCount,
+                    sessionRestored: true
+                })
+            };
+        }
+
+        // Check if key is bound to a DIFFERENT device
         const keyBindingData = loadFromStorage(keyStorageKey);
-        if (keyBindingData && keyBindingData.deviceId !== finalDeviceId) {
+        if (keyBindingData && keyBindingData.deviceId && keyBindingData.deviceId !== stableDeviceId) {
             // ❌ KEY IS LOCKED TO DIFFERENT DEVICE
-            console.log('❌ Key locked to different device - Key:', key.substring(0, 4) + '...');
+            console.log('❌ Key locked to different device');
+            console.log('   Current device:', stableDeviceId.substring(0, 12));
+            console.log('   Bound device:', keyBindingData.deviceId.substring(0, 12));
             
             return {
                 statusCode: 401,
                 headers: HTTP_HEADERS,
                 body: JSON.stringify({
                     verified: false,
-                    message: "This key is permanently locked to another device. Each key can only be used on one device."
+                    message: "This key is permanently locked to another device. Each key works on only one device to prevent sharing."
                 })
             };
         }
@@ -189,28 +278,48 @@ exports.handler = async (event, context) => {
         // ✅ NEW DEVICE CLAIM - Lock key to this device
         const now = Date.now();
         
+        console.log('🆕 Claiming new device for key:', key.substring(0, 4) + '...');
+        
+        // Create device binding
         const newDeviceData = {
             key: key,
             username: username,
             tier: tier,
             claimedAt: now,
             loginCount: 1,
-            lastLogin: now
+            lastLogin: now,
+            lastIP: clientIP,
+            userAgent: userAgent.substring(0, 100)
         };
 
+        // Create key binding
         const newKeyBinding = {
-            deviceId: finalDeviceId,
+            deviceId: stableDeviceId,
             username: username,
             tier: tier,
-            claimedAt: now
+            claimedAt: now,
+            lastUsed: now
         };
 
-        // Save both bindings
+        // Create session
+        const newSessionData = {
+            key: key,
+            username: username,
+            tier: tier,
+            deviceId: stableDeviceId,
+            loginCount: 1,
+            lastLogin: now,
+            lastIP: clientIP,
+            sessionCreated: now
+        };
+
+        // Save all three storage items
         const deviceSaved = saveToStorage(deviceStorageKey, newDeviceData);
         const keySaved = saveToStorage(keyStorageKey, newKeyBinding);
+        const sessionSaved = saveToStorage(sessionStorageKey, newSessionData);
 
-        if (!deviceSaved || !keySaved) {
-            console.error('❌ Failed to save device/key binding');
+        if (!deviceSaved || !keySaved || !sessionSaved) {
+            console.error('❌ Failed to save bindings');
             return {
                 statusCode: 500,
                 headers: HTTP_HEADERS,
@@ -221,7 +330,17 @@ exports.handler = async (event, context) => {
             };
         }
 
-        console.log('✅ NEW KEY CLAIMED - User:', username, 'Device:', finalDeviceId.substring(0, 8) + '...');
+        console.log('✅ NEW KEY CLAIMED AND LOCKED - User:', username);
+
+        // Optional: Log to Discord
+        await logToDiscord({
+            success: true,
+            username: username,
+            tier: tier,
+            newClaim: true,
+            deviceId: stableDeviceId.substring(0, 12) + '...',
+            ip: clientIP
+        }).catch(() => {});
 
         return {
             statusCode: 200,
@@ -229,8 +348,8 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({
                 verified: true,
                 username: username,
-                message: `Welcome ${username}! Your key is now permanently locked to this device. You can login unlimited times, but this key won't work on other devices.`,
-                sessionToken: generateToken(),
+                message: `Welcome ${username}! Your key is now permanently locked to this device. You can exit and re-enter the app anytime - your access is saved!`,
+                sessionToken: generateSessionToken(),
                 tier: tier,
                 newUser: true,
                 deviceLocked: true,
@@ -246,7 +365,7 @@ exports.handler = async (event, context) => {
             headers: HTTP_HEADERS,
             body: JSON.stringify({ 
                 verified: false,
-                message: 'Authentication system temporarily unavailable' 
+                message: 'Authentication system temporarily unavailable. Please try again in a moment.' 
             })
         };
     }
@@ -270,8 +389,10 @@ async function logToDiscord(data) {
                     color: data.success ? 0x00ff00 : 0xff0000,
                     fields: [
                         { name: "Username", value: data.username || "Unknown", inline: true },
-                        { name: "Time", value: new Date().toISOString(), inline: true },
-                        { name: "Status", value: data.newClaim ? "New Claim" : "Returning User", inline: true }
+                        { name: "Device", value: data.deviceId || "Unknown", inline: true },
+                        { name: "Type", value: data.newClaim ? "New Claim" : "Returning", inline: true },
+                        { name: "Tier", value: data.tier || "basic", inline: true },
+                        { name: "Time", value: new Date().toISOString(), inline: true }
                     ]
                 }]
             })
