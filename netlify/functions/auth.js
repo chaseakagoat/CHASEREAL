@@ -13,6 +13,8 @@ const VALID_KEYS = new Map([
     ["JAIQlqp@12", { username: "Promo@chase.com", tier: "gold" }],
     ["XLao192", { username: "@top_burglar@chase.com", tier: "gold" }],
     ["alqm192&", { username: "@plugzzdem@chase.com", tier: "premium" }],
+      ["CHASE@11037", { username: "jomewn@chase.com", tier: "premium" }]
+    
     ["secure2024", { username: "SecureUser", tier: "premium" }]
 ]);
 
