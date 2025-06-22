@@ -16,7 +16,7 @@ const VALID_KEYS = new Map([
     ["secure2024", { username: "SecureUser", tier: "premium" }],
     ["Caka@228", { username: "jomewn@chase.com", tier: "premium" }],
     ["AlqM192", { username: "800+@chase.com", tier: "premium" }],
-
+    ["Anql@129", { username: "CHVXE@chase.com", tier: "premium" }],
 ]);
 
 const HTTP_HEADERS = {
