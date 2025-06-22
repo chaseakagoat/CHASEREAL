@@ -1,28 +1,27 @@
-// 🔒 ENTERPRISE-GRADE NETLIFY AUTHENTICATION
-// Enhanced security with permanent key claiming for your iOS app
+// 🔒 DEVICE-LOCKED NETLIFY AUTHENTICATION
+// Keys can ONLY be used on the device they were first claimed on
 
-// 🔑 PERMANENT KEYS (Each key can only be claimed by ONE person, but unlimited use after claim)
+// 🔑 AVAILABLE KEYS (Once claimed, locked to that device forever)
 const validKeys = new Map([
     ["demo123", { username: "DemoUser", tier: "basic", created: Date.now() }],
     ["test456", { username: "TestUser", tier: "premium", created: Date.now() }],
     ["admin789", { username: "AdminUser", tier: "admin", created: Date.now() }],
     ["mykey2024", { username: "MyUser", tier: "basic", created: Date.now() }],
     ["secure2024", { username: "SecureUser", tier: "premium", created: Date.now() }],
-    // Add your own keys here - they get claimed on first use
+    // Add your own keys here
 ]);
 
-// 📱 Enhanced device tracking with security metadata
-const authorizedDevices = new Map(); // deviceId -> { username, keyUsed, firstLogin, lastLogin, tier, sessionToken, loginCount }
-const keyOwnership = new Map(); // key -> { username, deviceId, claimedAt, tier, ip }
-const deviceSessions = new Map(); // deviceId -> { token, expiresAt, loginCount }
+// 📱 Device tracking - keys are forever locked to first device used
+const deviceKeyBindings = new Map(); // deviceId -> { key, username, tier, claimedAt, loginCount }
+const keyDeviceBindings = new Map(); // key -> { deviceId, username, claimedAt, locked: true }
 
-// 🚨 Enhanced security tracking
-const securityEvents = new Map(); // deviceId -> [events]
-const suspiciousActivity = new Map(); // ip -> { attempts, firstSeen, lastSeen, blocked }
+// 🚨 Security tracking
+const securityEvents = new Map();
+const suspiciousActivity = new Map();
 const blockedDevices = new Set();
 const blockedIPs = new Set();
 
-// 📊 Enhanced rate limiting
+// 📊 Rate limiting
 const loginAttempts = new Map();
 const MAX_ATTEMPTS = 3;
 const LOCKOUT_TIME = 30 * 60 * 1000; // 30 minutes
@@ -32,9 +31,7 @@ const MAX_DAILY_ATTEMPTS = 20;
 const SECURITY_CONFIG = {
     enableTimestampValidation: true,
     maxTimestampDrift: 5 * 60 * 1000, // 5 minutes
-    enableBiometricTracking: true,
     sessionTimeout: 24 * 60 * 60 * 1000, // 24 hours
-    maxDevicesPerKey: 3,
     suspiciousThreshold: 5,
     autoBlockThreshold: 10
 };
@@ -60,18 +57,17 @@ function generateSecureToken() {
 }
 
 function hashDeviceFingerprint(deviceId, additionalData = '') {
-    // Simple hash since we don't have crypto in Netlify
     let hash = 0;
     const str = deviceId + additionalData + 'salt123';
     for (let i = 0; i < str.length; i++) {
         const char = str.charCodeAt(i);
         hash = ((hash << 5) - hash) + char;
-        hash = hash & hash; // Convert to 32bit integer
+        hash = hash & hash;
     }
     return Math.abs(hash).toString(16);
 }
 
-// 🔍 Advanced security checks
+// 🔍 Security checks
 function detectSuspiciousActivity(ip, deviceId, patterns = {}) {
     const now = Date.now();
     
@@ -91,7 +87,6 @@ function detectSuspiciousActivity(ip, deviceId, patterns = {}) {
     activity.lastSeen = now;
     activity.devices.add(deviceId);
     
-    // Check for suspicious patterns
     if (patterns.rapidAttempts && activity.attempts > SECURITY_CONFIG.suspiciousThreshold) {
         activity.patterns.push('rapid_attempts');
     }
@@ -100,7 +95,6 @@ function detectSuspiciousActivity(ip, deviceId, patterns = {}) {
         activity.patterns.push('multiple_devices');
     }
     
-    // Auto-block if threshold exceeded
     if (activity.attempts >= SECURITY_CONFIG.autoBlockThreshold) {
         activity.blocked = true;
         blockedIPs.add(ip);
@@ -114,13 +108,12 @@ function detectSuspiciousActivity(ip, deviceId, patterns = {}) {
     };
 }
 
-// 🔐 Enhanced rate limiting
+// 🔐 Rate limiting
 function checkAdvancedRateLimit(deviceId, ip) {
     const deviceKey = `device_${deviceId}`;
     const ipKey = `ip_${ip}`;
     const now = Date.now();
     
-    // Check device-specific rate limit
     if (!loginAttempts.has(deviceKey)) {
         loginAttempts.set(deviceKey, { 
             count: 0, 
@@ -131,7 +124,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
         });
     }
     
-    // Check IP-specific rate limit
     if (!loginAttempts.has(ipKey)) {
         loginAttempts.set(ipKey, { 
             count: 0, 
@@ -145,7 +137,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
     const deviceAttempts = loginAttempts.get(deviceKey);
     const ipAttempts = loginAttempts.get(ipKey);
     
-    // Check if IP is blocked
     if (blockedIPs.has(ip)) {
         return {
             allowed: false,
@@ -154,7 +145,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
         };
     }
     
-    // Check device lockout
     if (deviceAttempts.lockedUntil > now) {
         return {
             allowed: false,
@@ -164,7 +154,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
         };
     }
     
-    // Check IP lockout
     if (ipAttempts.lockedUntil > now) {
         return {
             allowed: false,
@@ -174,7 +163,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
         };
     }
     
-    // Reset daily counts if needed
     if (now > deviceAttempts.dailyReset) {
         deviceAttempts.dailyCount = 0;
         deviceAttempts.dailyReset = now + (24 * 60 * 60 * 1000);
@@ -185,7 +173,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
         ipAttempts.dailyReset = now + (24 * 60 * 60 * 1000);
     }
     
-    // Increment counters
     deviceAttempts.count++;
     deviceAttempts.dailyCount++;
     deviceAttempts.lastAttempt = now;
@@ -194,7 +181,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
     ipAttempts.dailyCount++;
     ipAttempts.lastAttempt = now;
     
-    // Check daily limits
     if (ipAttempts.dailyCount >= MAX_DAILY_ATTEMPTS) {
         ipAttempts.lockedUntil = now + (24 * 60 * 60 * 1000);
         return {
@@ -204,7 +190,6 @@ function checkAdvancedRateLimit(deviceId, ip) {
         };
     }
     
-    // Check rate limits
     if (deviceAttempts.count >= MAX_ATTEMPTS) {
         deviceAttempts.lockedUntil = now + LOCKOUT_TIME;
     }
@@ -221,7 +206,7 @@ function checkAdvancedRateLimit(deviceId, ip) {
     };
 }
 
-// 🚨 Enhanced Discord logging
+// 🚨 Discord logging
 async function sendEnhancedDiscordLog(data) {
     const webhookURL = process.env.DISCORD_WEBHOOK_URL;
     if (!webhookURL) return;
@@ -263,7 +248,7 @@ async function sendEnhancedDiscordLog(data) {
                 }
             ],
             footer: {
-                text: "Enhanced Chase Security Monitor",
+                text: "Device-Locked Security Monitor",
                 icon_url: "https://cdn-icons-png.flaticon.com/512/3064/3064197.png"
             },
             timestamp: new Date().toISOString()
@@ -280,14 +265,14 @@ async function sendEnhancedDiscordLog(data) {
         if (data.keyUsed && data.success) {
             embed.fields.push({
                 name: "🔑 Key Status",
-                value: data.newClaim ? "🆕 First Time Claim" : "🔄 Returning User",
+                value: data.newClaim ? "🆕 First Time Claim (Device Locked)" : "🔄 Returning to Locked Device",
                 inline: true
             });
         }
 
         const payload = {
             embeds: [embed],
-            username: "Enhanced Chase Security",
+            username: "Device-Locked Security",
             avatar_url: "https://cdn-icons-png.flaticon.com/512/3064/3064197.png"
         };
 
@@ -302,9 +287,8 @@ async function sendEnhancedDiscordLog(data) {
     }
 }
 
-// 🔐 MAIN ENHANCED NETLIFY AUTHENTICATION HANDLER
+// 🔐 MAIN DEVICE-LOCKED AUTHENTICATION HANDLER
 exports.handler = async (event, context) => {
-    // Enhanced CORS with security headers
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type, X-Signature, X-Timestamp, X-Request-Nonce',
@@ -334,17 +318,15 @@ exports.handler = async (event, context) => {
         const requestBody = JSON.parse(event.body);
         const { key, deviceId, timestamp, biometricEnabled } = requestBody;
         
-        // Get client IP with multiple fallbacks
         const clientIP = event.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
                         event.headers['x-real-ip'] || 
                         event.headers['cf-connecting-ip'] ||
                         context.clientContext?.ip || 
                         'unknown';
 
-        // Create secure device hash
         const deviceHash = hashDeviceFingerprint(deviceId, clientIP);
         
-        console.log('🔒 Enhanced auth request - IP:', clientIP, 'Device Hash:', deviceHash.substring(0, 16) + '...', 'Biometric:', biometricEnabled);
+        console.log('🔒 Device-locked auth request - IP:', clientIP, 'Device Hash:', deviceHash.substring(0, 16) + '...', 'Biometric:', biometricEnabled);
 
         // Validate required fields
         if (!key || !deviceId) {
@@ -411,7 +393,7 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Enhanced rate limiting
+        // Rate limiting
         const rateCheck = checkAdvancedRateLimit(deviceId, clientIP);
         if (!rateCheck.allowed) {
             await sendEnhancedDiscordLog({
@@ -435,23 +417,19 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Check if device is already authorized (returning user)
-        if (authorizedDevices.has(deviceId)) {
-            const deviceInfo = authorizedDevices.get(deviceId);
+        // 🔑 KEY-DEVICE BINDING LOGIC - THIS IS THE MAIN CHANGE!
+
+        // Check if this key is already bound to a device
+        if (keyDeviceBindings.has(key)) {
+            const keyBinding = keyDeviceBindings.get(key);
             
-            // Verify the key matches the originally claimed key
-            if (keyOwnership.has(key) && keyOwnership.get(key).deviceId === deviceId) {
-                // Update last login
-                deviceInfo.lastLogin = Date.now();
+            // Key is already claimed - check if it's THIS device
+            if (keyBinding.deviceId === deviceId) {
+                // ✅ SAME DEVICE - Allow login and update stats
+                const deviceInfo = deviceKeyBindings.get(deviceId);
                 deviceInfo.loginCount = (deviceInfo.loginCount || 0) + 1;
                 
-                // Generate new session token
                 const sessionToken = generateSecureToken();
-                deviceSessions.set(deviceId, {
-                    token: sessionToken,
-                    expiresAt: Date.now() + SECURITY_CONFIG.sessionTimeout,
-                    loginCount: deviceInfo.loginCount
-                });
 
                 await sendEnhancedDiscordLog({
                     success: true,
@@ -463,7 +441,7 @@ exports.handler = async (event, context) => {
                     biometricEnabled: biometricEnabled || false
                 });
 
-                console.log('✅ Returning authorized user:', deviceInfo.username, 'Login count:', deviceInfo.loginCount);
+                console.log('✅ Device-locked key accepted - User:', deviceInfo.username, 'Login count:', deviceInfo.loginCount);
 
                 return {
                     statusCode: 200,
@@ -471,61 +449,39 @@ exports.handler = async (event, context) => {
                     body: JSON.stringify({
                         verified: true,
                         username: deviceInfo.username,
-                        message: `Welcome back! (Login #${deviceInfo.loginCount})`,
+                        message: `Welcome back! This key is locked to your device. (Login #${deviceInfo.loginCount})`,
                         sessionToken: sessionToken,
-                        tier: deviceInfo.tier || 'basic'
+                        tier: deviceInfo.tier || 'basic',
+                        deviceLocked: true
                     })
                 };
             } else {
-                // Device exists but key doesn't match - security violation
+                // ❌ DIFFERENT DEVICE - Reject login
                 await sendEnhancedDiscordLog({
                     success: false,
                     deviceHash: deviceHash.substring(0, 16) + '...',
                     ip: clientIP,
-                    reason: 'Key mismatch for authorized device',
+                    reason: `Key is locked to a different device (claimed by ${keyBinding.username})`,
                     severity: 'high',
-                    securityFlags: ['KEY_MISMATCH', 'POTENTIAL_HIJACK'],
+                    securityFlags: ['DEVICE_MISMATCH', 'KEY_LOCKED_TO_OTHER_DEVICE'],
                     biometricEnabled: biometricEnabled || false
                 });
+
+                console.log('❌ Key locked to different device - Rejected');
 
                 return {
                     statusCode: 401,
                     headers,
                     body: JSON.stringify({
                         verified: false,
-                        message: "Security violation detected"
+                        message: "This key is permanently locked to a different device and cannot be used here."
                     })
                 };
             }
         }
 
-        // Check if key exists in valid keys
+        // Key is not yet bound to any device - check if it's valid
         if (!validKeys.has(key)) {
-            // Check if key was already claimed by someone else
-            if (keyOwnership.has(key)) {
-                const ownership = keyOwnership.get(key);
-                
-                await sendEnhancedDiscordLog({
-                    success: false,
-                    deviceHash: deviceHash.substring(0, 16) + '...',
-                    ip: clientIP,
-                    reason: `Key already claimed by ${ownership.username}`,
-                    severity: 'medium',
-                    securityFlags: ['KEY_ALREADY_CLAIMED'],
-                    biometricEnabled: biometricEnabled || false
-                });
-
-                return {
-                    statusCode: 401,
-                    headers,
-                    body: JSON.stringify({
-                        verified: false,
-                        message: "This key has already been claimed by another user"
-                    })
-                };
-            }
-
-            // Key doesn't exist at all
             await sendEnhancedDiscordLog({
                 success: false,
                 deviceHash: deviceHash.substring(0, 16) + '...',
@@ -546,41 +502,33 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Key is valid and unclaimed - claim it for this user/device
+        // ✅ NEW KEY CLAIM - Lock key to this device forever
         const keyData = validKeys.get(key);
         const username = typeof keyData === 'string' ? keyData : keyData.username || 'User';
         const tier = typeof keyData === 'object' ? keyData.tier || 'basic' : 'basic';
+        const now = Date.now();
         
-        // Claim the key
-        keyOwnership.set(key, {
+        // Create device binding
+        deviceKeyBindings.set(deviceId, {
+            key: key,
             username: username,
-            deviceId: deviceId,
-            claimedAt: Date.now(),
             tier: tier,
-            ip: clientIP
-        });
-        
-        // Authorize the device
-        authorizedDevices.set(deviceId, {
-            username: username,
-            keyUsed: key,
-            firstLogin: Date.now(),
-            lastLogin: Date.now(),
-            tier: tier,
-            loginCount: 1,
-            biometricEnabled: biometricEnabled || false
-        });
-        
-        // Generate session token
-        const sessionToken = generateSecureToken();
-        deviceSessions.set(deviceId, {
-            token: sessionToken,
-            expiresAt: Date.now() + SECURITY_CONFIG.sessionTimeout,
+            claimedAt: now,
             loginCount: 1
         });
         
-        // Remove key from available keys (it's now permanently claimed)
+        // Create key binding (lock key to this device)
+        keyDeviceBindings.set(key, {
+            deviceId: deviceId,
+            username: username,
+            claimedAt: now,
+            locked: true
+        });
+        
+        // Remove key from available pool
         validKeys.delete(key);
+        
+        const sessionToken = generateSecureToken();
         
         await sendEnhancedDiscordLog({
             success: true,
@@ -593,7 +541,7 @@ exports.handler = async (event, context) => {
             biometricEnabled: biometricEnabled || false
         });
 
-        console.log('✅ NEW KEY CLAIMED - User:', username, 'Tier:', tier, 'Device:', deviceHash.substring(0, 16) + '...');
+        console.log('✅ NEW KEY LOCKED TO DEVICE - User:', username, 'Tier:', tier, 'Device:', deviceHash.substring(0, 16) + '...');
 
         return {
             statusCode: 200,
@@ -601,15 +549,16 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({
                 verified: true,
                 username: username,
-                message: "Key claimed successfully! You can now use this key unlimited times on this device.",
+                message: "Key claimed and permanently locked to this device! You can now use this key unlimited times, but ONLY on this device.",
                 sessionToken: sessionToken,
                 tier: tier,
-                newUser: true
+                newUser: true,
+                deviceLocked: true
             })
         };
 
     } catch (error) {
-        console.error('❌ Enhanced auth error:', error);
+        console.error('❌ Device-locked auth error:', error);
         
         await sendEnhancedDiscordLog({
             success: false,
