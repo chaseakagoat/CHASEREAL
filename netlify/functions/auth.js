@@ -12,8 +12,11 @@ const VALID_KEYS = new Map([
     ["JAIQlqp12", { username: "Promo@chase.com", tier: "gold" }],
     ["XLao192", { username: "@top_burglar@chase.com", tier: "gold" }],
     ["alqm192", { username: "@plugzzdem@chase.com", tier: "premium" }],
-    ["CHASE11037", { username: "jomewn@chase.com", tier: "premium" }],
-    ["secure2024", { username: "SecureUser", tier: "premium" }]
+    ["CHASE11037", { username: "jo.com", tier: "premium" }],
+    ["secure2024", { username: "SecureUser", tier: "premium" }],
+    ["Caka@228", { username: "jomewn@chase.com", tier: "premium" }],
+
+
 ]);
 
 const HTTP_HEADERS = {
