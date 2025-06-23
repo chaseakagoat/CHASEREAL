@@ -31,7 +31,7 @@ const VALID_KEYS = new Map([
     ["test456", { username: "TestUser", tier: "premium" }],
     ["admin789", { username: "AdminUser", tier: "admin" }],
     ["mykey2024", { username: "MyUser", tier: "basic" }],
-    ["JAIQlqp12", { username: "Promo@chase.com", tier: "gold" }],
+    ["Alao822", { username: "Promo@chase.com", tier: "gold" }],
     ["XLao192", { username: "@top_burglar@chase.com", tier: "gold" }],
     ["alqm192", { username: "@plugzzdem@chase.com", tier: "premium" }],
     ["CHASE11037", { username: "jo.com", tier: "premium" }],
